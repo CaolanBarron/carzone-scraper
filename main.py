@@ -6,6 +6,7 @@ from selenium.webdriver.firefox.options import Options
 from webdriver_manager.firefox import GeckoDriverManager
 from selenium.webdriver.firefox.service import Service as FirefoxService
 import os
+import csv
 
 # Set up selenium using the firefox webdriver
 # Configure it to open the browser as headless so the browser window will not open
@@ -73,4 +74,43 @@ writeRawHtml(rawHtml)
 writeFormattedHtml()
 """
 
-# Retrive Car data and save to csv file
+# Retrive Car data and append it to csv file
+def writeCarCSV(fileName):
+    file = open(fileName)
+
+    # Get csv file in append file
+    csv_file = open('cars-csv/car-data.csv', 'a')
+    car_writer = csv.writer(csv_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL )
+
+    soup = BeautifulSoup(file, 'html.parser')
+    car_elements = soup.find_all('stock-summary-item')
+    # Iterates through each car section and extracts specific data before writing it to the csv file
+    for car_element in car_elements:
+        features_details = car_element.find('span', class_='stock-summary__features__details').find('strong').text
+        features_details = features_details.split()
+        manu_year =  features_details[0]
+        engine_type = features_details[-1]
+        price = car_element.find('div', class_='cz-price').find('span').find('span').text
+        dealer_loc = car_element.find('span', class_='stock-summary__features__dealer').text
+        dealer_loc = dealer_loc[6:]
+
+        car_url = car_element.find('a' )['href']
+        car_writer.writerow([manu_year, price,dealer_loc, car_url])
+    file.close()
+    csv_file.close()
+
+def  populateCSV():
+    with open('cars-csv/car-data.csv','w') as csv_file:
+        writer = csv.writer(csv_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(['Manufacturing year', 'Price', 'Dealer location', 'URL'])
+
+    for filename in os.listdir('raw-html'):
+        f = os.path.join('raw-html', filename)
+        if os.path.isfile(f):
+            writeCarCSV(f)
+
+populateCSV()
+
+import pandas
+df = pandas.read_csv('cars-csv/car-data.csv')
+print(df)
