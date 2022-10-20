@@ -16,7 +16,7 @@ service=FirefoxService(executable_path='geckodriver-v0.32.0-linux64/geckodriver'
 browser = webdriver.Firefox(options=options,service=service)
 
 # Returns an array of string urls carzone search page 1 to the provided argument amount
-def getUrls(amount):
+def getCarSummaryUrls(amount):
     urls = []
     for i in range(1,amount+1):
         urls.append('https://www.carzone.ie/search?page=' + str(i))
@@ -26,60 +26,48 @@ def getUrls(amount):
 # Takes an array of string urls which it then uses selenium to load each
 # After saving the html as a BS4 object it returns an array of elements that match 'stock-summary-item'
 
-def getRawHtml(urls):
+def getRawSummaryHtml(urls):
     soups = []
     for i in urls:
         browser.get(i)
         # Necessary as selenium needs some time to load the page(I think)
-        # (EDIT: Seems like its not necessary)
-        # time.sleep(1)
+        time.sleep(0.5)
         soup = BeautifulSoup(browser.page_source, 'html.parser')
         soup = soup.find_all('stock-summary-item')
+        print("Scraped {} elements from: {}".format(soup.__len__(), i))
         soups.append(soup)
     return soups
 
 # Writes each raw html to a file into a folder
-def writeRawHtml(soups):
+def writeRawHtml(soups, directory):
     for id, soup in enumerate(soups):
-        f = open("raw-html/page-{}.html".format(id+1), "w")
+        f = open("{}/page-{}.html".format(directory,id+1), "w")
         f.write(soup.__str__())
+        print("Wrote {} raw html file".format(id+1))
         f.close()
 
 # Takes each raw html file from the folder and creates a new file in a more human readable format
-def writeFormattedHtml():
-    formattedDir = 'raw-html'
+def writeFormattedHtml(rawDirectory, formattedDirectory):
     soups=[]
-    for filename in os.listdir(formattedDir):
-        f = os.path.join(formattedDir, filename)
+    for filename in os.listdir(rawDirectory):
+        f = os.path.join(rawDirectory, filename)
         if os.path.isfile(f):
             file = open(f)
             soups.append(BeautifulSoup(file, 'html.parser'))
             file.close()
     
     for id, soup in enumerate(soups):
-        f = open("formatted-html/page-{}.html".format(id+1), 'w')
+        f = open("{}/page-{}.html".format(formattedDirectory,id+1), 'w')
         f.write(soup.prettify())
+        print("wrote {} formatted hmtl file".format(id+1))
         f.close
-
-"""
-This block Loads the first 50 pages of the website and stores the raw html into a folder
-It then gets each of the raw html and formats it into readable language in another folder
-This is to make it easier to make a scraping program. It will not be neccessary when scraping is implemented.
-I can just store the html in a raw format
-"""
-"""
-urls = getUrls(50)
-rawHtml = getRawHtml(urls)
-writeRawHtml(rawHtml)
-writeFormattedHtml()
-"""
 
 # Retrive Car data and append it to csv file
 def writeCarCSV(fileName):
     file = open(fileName)
 
     # Get csv file in append file
-    csv_file = open('cars-csv/car-data.csv', 'a')
+    csv_file = open('cars-csv/car-summary-data.csv', 'a')
     car_writer = csv.writer(csv_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL )
 
     soup = BeautifulSoup(file, 'html.parser')
@@ -99,18 +87,42 @@ def writeCarCSV(fileName):
     file.close()
     csv_file.close()
 
-def  populateCSV():
-    with open('cars-csv/car-data.csv','w') as csv_file:
+def  populateSummaryCSV():
+    with open('cars-csv/car-summary-data.csv','w') as csv_file:
         writer = csv.writer(csv_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
         writer.writerow(['Manufacturing year', 'Price', 'Dealer location', 'URL'])
 
-    for filename in os.listdir('raw-html'):
-        f = os.path.join('raw-html', filename)
+    for filename in os.listdir('raw-summary-html'):
+        f = os.path.join('raw-summary-html', filename)
         if os.path.isfile(f):
             writeCarCSV(f)
+            
+"""
+This block Loads the first 50 pages of the website and stores the raw html into a folder
+It then gets each of the raw html and formats it into readable language in another folder
+This is to make it easier to make a scraping program. It will not be neccessary when scraping is implemented.
+I can just store the html in a raw format
+"""
 
-populateCSV()
 
-import pandas
-df = pandas.read_csv('cars-csv/car-data.csv')
-print(df)
+if __name__ == '__main__':
+    while True:
+        print("1. Write car summarys as raw html")
+        print("2. Convert raw car summary html to human readable")
+        print("3. Convert car summarys to single csv details file")
+        print("4. Exit",end='\n'*2)
+        print("Enter choice: ")
+        option_choice = input()
+
+        print('\n'*2)
+
+        if option_choice == "1":
+            urls = getCarSummaryUrls(50)
+            rawHtml = getRawSummaryHtml(urls)
+            writeRawHtml(rawHtml, 'raw-summary-html')
+        elif option_choice == "2":
+            writeFormattedHtml('raw-summary-html','formatted-summary-html')
+        elif option_choice == "3":
+            populateSummaryCSV()
+        elif option_choice == "4":
+            break

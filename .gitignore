@@ -162,8 +162,9 @@ cython_debug/
 
 
 # Html files
-formatted-html/
-raw-html/
+formatted-summary-html/*
+raw-summary-html/*
+cars-csv/*
 
 # drivers
 geckodriver-v0.32.0-linux64/
