@@ -1,3 +1,5 @@
+from concurrent.futures.process import _chain_from_iterable_of_lists
+from fileinput import filename
 from genericpath import isfile
 import time
 from bs4 import BeautifulSoup
@@ -13,7 +15,6 @@ import csv
 options = Options()
 options.headless = True
 service=FirefoxService(executable_path='geckodriver-v0.32.0-linux64/geckodriver')
-browser = webdriver.Firefox(options=options,service=service)
 
 # Returns an array of string urls carzone search page 1 to the provided argument amount
 def getCarSummaryUrls(amount):
@@ -26,16 +27,19 @@ def getCarSummaryUrls(amount):
 # Takes an array of string urls which it then uses selenium to load each
 # After saving the html as a BS4 object it returns an array of elements that match 'stock-summary-item'
 
-def getRawSummaryHtml(urls):
+def getRawHtml(urls, delimiter):
+    browser = webdriver.Firefox(options=options,service=service)
     soups = []
-    for i in urls:
-        browser.get(i)
+    for index, url in enumerate(urls):
+        browser.get(url)
         # Necessary as selenium needs some time to load the page(I think)
         time.sleep(0.5)
         soup = BeautifulSoup(browser.page_source, 'html.parser')
-        soup = soup.find_all('stock-summary-item')
-        print("Scraped {} elements from: {}".format(soup.__len__(), i))
+        if delimiter:
+            soup = soup.find_all(delimiter)
+        print("Scraped: {}/{}".format(index + 1, len(urls)))
         soups.append(soup)
+    browser.close()
     return soups
 
 # Writes each raw html to a file into a folder
@@ -46,24 +50,8 @@ def writeRawHtml(soups, directory):
         print("Wrote {} raw html file".format(id+1))
         f.close()
 
-# Takes each raw html file from the folder and creates a new file in a more human readable format
-def writeFormattedHtml(rawDirectory, formattedDirectory):
-    soups=[]
-    for filename in os.listdir(rawDirectory):
-        f = os.path.join(rawDirectory, filename)
-        if os.path.isfile(f):
-            file = open(f)
-            soups.append(BeautifulSoup(file, 'html.parser'))
-            file.close()
-    
-    for id, soup in enumerate(soups):
-        f = open("{}/page-{}.html".format(formattedDirectory,id+1), 'w')
-        f.write(soup.prettify())
-        print("wrote {} formatted hmtl file".format(id+1))
-        f.close
-
-# Retrive Car data and append it to csv file
-def writeCarCSV(fileName):
+# Retrive Car summary data and append it to csv file
+def writeCarSummaryCSV(fileName):
     file = open(fileName)
 
     # Get csv file in append file
@@ -95,22 +83,116 @@ def  populateSummaryCSV():
     for filename in os.listdir('raw-summary-html'):
         f = os.path.join('raw-summary-html', filename)
         if os.path.isfile(f):
-            writeCarCSV(f)
+            writeCarSummaryCSV(f)
             
-"""
-This block Loads the first 50 pages of the website and stores the raw html into a folder
-It then gets each of the raw html and formats it into readable language in another folder
-This is to make it easier to make a scraping program. It will not be neccessary when scraping is implemented.
-I can just store the html in a raw format
-"""
+def getCarDetailsUrls(limit):
+    urls = []
+    with open('cars-csv/car-summary-data.csv') as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=',')
+        for count,row in enumerate(csv_reader):
+            if count > limit:
+                break
+            if count == 0:
+                continue
+            url = 'https://www.carzone.ie' + row[3]
+            urls.append(url)
+    return urls
+
+def writeCarDetailsCSV(fileName):
+    print(fileName)
+    file = open(fileName)
+    csv_file = open('cars-csv/car-detail-data.csv','a')
+    car_writer = csv.writer(csv_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+    
+    soup = BeautifulSoup(file, 'html.parser')
+    soups = soup.find_all('fpa-main-detail')
+
+    for soup in soups:
+        price = soup.find('div', class_='cz-price').find('span').text
+        price = price.replace('€','')
+        price = price.replace(',','')
+        carDetailsList = soup.find('ul', class_='fpa-features')
+
+        def findInnerSpan(input):
+            object = carDetailsList.find('li',{'id':input})
+            if object:
+                return object.find('span', class_='fpa-features__item__text').text
+            else:
+                return 'missing'
+
+        engine = findInnerSpan('engine') 
+        body = findInnerSpan('bodytype')
+        transmission = findInnerSpan('transmission')
+        mileage = findInnerSpan('mileage') 
+        color = findInnerSpan('colour')
+        numDoors = findInnerSpan('doors')
+        manYear = findInnerSpan('year').split()[0]
+
+        phoneNo = soup.find('p', class_='fpa-actions__phone').text
+
+        brand = soup.find('h1', class_='fpa-title').find('span').text
+        if ')' in brand:
+            brand = brand.split(')')[1].split()[0]
+        else:
+            brand = brand.split()[1]
+
+        car_writer.writerow([price, engine, body, transmission, mileage, 
+                            color, numDoors, manYear, phoneNo, brand])
+    file.close()
+    csv_file.close()
+
+def populateDetailsCSV():
+    with open('cars-csv/car-detail-data.csv','w') as csv_file:
+        writer = csv.writer(csv_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+        writer.writerow(['Price', 'Engine Type', 'Body Type', 'Transmission', 'Mileage',
+                        'Colour','Door Number','Manufacturing Year','Phone Number','Car Brand'])
+    
+    for filename in os.listdir('raw-details-html'):
+        f = os.path.join('raw-details-html', filename)
+        if os.path.isfile(f):
+            writeCarDetailsCSV(f)
+
+import pandas as pd
+import matplotlib.pyplot as plot
+
+def csvFileToDataframe(file):
+    df = pd.read_csv(file)
+    yearPriceDF = df[["Price","Manufacturing Year"]]
+    return yearPriceDF
+
+def scatterGraphYearPrice():
+    df = csvFileToDataframe('cars-csv/car-detail-data.csv')
+    sp = df.plot.scatter(x='Manufacturing Year',
+                         y= 'Price',
+                         c='DarkBlue')
+    plot.show(block=True)
+
+def dataVisMenu():
+    while True:
+
+        print("1. Display Price/Year scatter graph")
+        print("2. Return", end='\n'*2)
+        print("Enter choice: ")
+        option_choice = input()
+
+        print('\n'*2)
+
+        if option_choice == "1":
+            scatterGraphYearPrice()
+        elif option_choice == "2":
+            break
 
 
+
+# Interface for user to make interaction easier
 if __name__ == '__main__':
     while True:
         print("1. Write car summarys as raw html")
-        print("2. Convert raw car summary html to human readable")
-        print("3. Convert car summarys to single csv details file")
-        print("4. Exit",end='\n'*2)
+        print("2. Convert car summarys to single csv details file")
+        print("3. Write car details as raw html")
+        print("4. Convert car details to csv file using car summary csv urls", end='\n'*2)
+        print("5. Open data visualisation menu", end='\n'*2)
+        print("6. Exit",end='\n'*2)
         print("Enter choice: ")
         option_choice = input()
 
@@ -118,11 +200,17 @@ if __name__ == '__main__':
 
         if option_choice == "1":
             urls = getCarSummaryUrls(50)
-            rawHtml = getRawSummaryHtml(urls)
+            rawHtml = getRawHtml(urls, 'stock-summary-item')
             writeRawHtml(rawHtml, 'raw-summary-html')
         elif option_choice == "2":
-            writeFormattedHtml('raw-summary-html','formatted-summary-html')
-        elif option_choice == "3":
             populateSummaryCSV()
+        elif option_choice == "3":
+            urls = getCarDetailsUrls(300)
+            rawHtml = getRawHtml(urls,'fpa-main-detail')
+            writeRawHtml(rawHtml, 'raw-details-html')
         elif option_choice == "4":
+            populateDetailsCSV()
+        elif option_choice == "5":
+            dataVisMenu()
+        elif option_choice == "6":
             break

@@ -162,8 +162,8 @@ cython_debug/
 
 
 # Html files
-formatted-summary-html/*
 raw-summary-html/*
+raw-details-html/*
 cars-csv/*
 
 # drivers
