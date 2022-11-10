@@ -3,6 +3,7 @@ from fileinput import filename
 from genericpath import isfile
 import time
 from bs4 import BeautifulSoup
+from click import option
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from webdriver_manager.firefox import GeckoDriverManager
@@ -19,7 +20,7 @@ service=FirefoxService(executable_path='geckodriver-v0.32.0-linux64/geckodriver'
 # Returns an array of string urls carzone search page 1 to the provided argument amount
 def getCarSummaryUrls(amount):
     urls = []
-    for i in range(1,amount+1):
+    for i in range(1,int(amount)+1):
         urls.append('https://www.carzone.ie/search?page=' + str(i))
     
     return urls
@@ -37,7 +38,7 @@ def getRawHtml(urls, delimiter):
         soup = BeautifulSoup(browser.page_source, 'html.parser')
         if delimiter:
             soup = soup.find_all(delimiter)
-        print("Scraped: {}/{}".format(index + 1, len(urls)))
+        print("Scraped: {}/{}: {}".format(index + 1, len(urls), url))
         soups.append(soup)
     browser.close()
     return soups
@@ -65,13 +66,14 @@ def writeCarSummaryCSV(fileName):
         features_details = car_element.find('span', class_='stock-summary__features__details').find('strong').text
         features_details = features_details.split()
         manu_year =  features_details[0]
-        engine_type = features_details[-1]
         price = car_element.find('div', class_='cz-price').find('span').find('span').text
+        price = price[1:]
+        price = price.replace(',','')
         dealer_loc = car_element.find('span', class_='stock-summary__features__dealer').text
         dealer_loc = dealer_loc[6:]
 
         car_url = car_element.find('a' )['href']
-        car_writer.writerow([manu_year, price,dealer_loc, car_url])
+        car_writer.writerow([manu_year,price,dealer_loc, car_url])
     file.close()
     csv_file.close()
 
@@ -113,20 +115,25 @@ def writeCarDetailsCSV(fileName):
         price = price.replace(',','')
         carDetailsList = soup.find('ul', class_='fpa-features')
 
-        def findInnerSpan(input):
+        def findInnerSpan(input, isMileage):
             object = carDetailsList.find('li',{'id':input})
             if object:
                 return object.find('span', class_='fpa-features__item__text').text
             else:
-                return 'missing'
+                if isMileage:
+                    return '1'
+                else:
+                    return "missing"
 
-        engine = findInnerSpan('engine') 
-        body = findInnerSpan('bodytype')
-        transmission = findInnerSpan('transmission')
-        mileage = findInnerSpan('mileage') 
-        color = findInnerSpan('colour')
-        numDoors = findInnerSpan('doors')
-        manYear = findInnerSpan('year').split()[0]
+        engine = findInnerSpan('engine',False) 
+        body = findInnerSpan('bodytype',False)
+        transmission = findInnerSpan('transmission',False)
+        mileage = findInnerSpan('mileage',True)
+        mileage = mileage.replace(',','')
+        mileage = mileage.split()[0]
+        color = findInnerSpan('colour',False)
+        numDoors = findInnerSpan('doors',False)
+        manYear = findInnerSpan('year', False).split()[0]
 
         phoneNo = soup.find('p', class_='fpa-actions__phone').text
 
@@ -155,23 +162,80 @@ def populateDetailsCSV():
 import pandas as pd
 import matplotlib.pyplot as plot
 
-def csvFileToDataframe(file):
+def csvFileToDataframe(file, columns):
     df = pd.read_csv(file)
-    yearPriceDF = df[["Price","Manufacturing Year"]]
-    return yearPriceDF
+    if columns:
+        df = df[columns]
+    return df
 
 def scatterGraphYearPrice():
-    df = csvFileToDataframe('cars-csv/car-detail-data.csv')
+    df = csvFileToDataframe('cars-csv/car-detail-data.csv',["Manufacturing Year","Price"])
     sp = df.plot.scatter(x='Manufacturing Year',
                          y= 'Price',
                          c='DarkBlue')
     plot.show(block=True)
 
+def averagePriceByYear():
+    df = csvFileToDataframe('cars-csv/car-detail-data.csv',["Manufacturing Year", "Price"])
+    return df.groupby('Manufacturing Year').mean()
+
+def averagePriceBarChart():
+    df = averagePriceByYear()
+    df.plot.bar()
+    plot.show()
+
+def averagePriceBoxPlot():
+    df = csvFileToDataframe('cars-csv/car-detail-data.csv',["Manufacturing Year", "Price"])
+    df.boxplot(by='Manufacturing Year', column="Price")
+    plot.show()
+
+import plotly.express as px
+def createScatterFacet(df):
+    fig = px.scatter(df, x='Manufacturing Year', y='Price',color = "Door Number", facet_row="Transmission", facet_col="Car Brand", size="Mileage")
+    fig.show()
+
+import numpy as np
+def aggregatePrice(df):
+    table = pd.pivot_table(
+        df, values = 'Price', index=['Car Brand'],
+        columns=['Transmission','Door Number'],
+        aggfunc=np.mean)
+    print(table)
+
+import json
+from geojson_rewind import rewind
+def displayGeolocation(df):
+    with open('./IRL_ADM1.json', 'r') as fp:
+        ireland_regions_geo = json.load(fp)    
+        ireland_regions_geo = rewind(ireland_regions_geo, rfc7946 = False)
+
+        price_df = df.groupby("Dealer location")[["Price", "Manufacturing year"]].median()
+        price_df.reset_index(inplace=True)
+        
+        fig = px.choropleth(
+            price_df,
+            geojson=ireland_regions_geo,
+            locations="Dealer location",
+            color = "Price",
+            color_continuous_scale= "purples",
+            featureidkey="properties.NAME",
+            range_color=(100, df["Price"].max()),
+            scope="europe",
+        )
+        fig.update_geos(fitbounds="geojson", visible=False)
+        fig.show()
+
 def dataVisMenu():
     while True:
 
         print("1. Display Price/Year scatter graph")
-        print("2. Return", end='\n'*2)
+        print("2. Display Average Price by Year")
+        print("3. Display Average Price Bar Chart")
+        print("4. Display Average Price Box Plot")
+        print("5. Display Scatter Facet")
+        print("6. Aggregate Prices", end='\n'*2)
+        print("7. Show car price per counties", end='\n'*2)
+        print("8. Return", end='\n'*2)
         print("Enter choice: ")
         option_choice = input()
 
@@ -180,6 +244,18 @@ def dataVisMenu():
         if option_choice == "1":
             scatterGraphYearPrice()
         elif option_choice == "2":
+            print(averagePriceByYear())
+        elif option_choice == "3":
+            averagePriceBarChart()
+        elif option_choice == "4":
+            averagePriceBoxPlot()
+        elif option_choice == "5":
+            createScatterFacet(csvFileToDataframe('cars-csv/car-detail-data.csv',["Manufacturing Year", "Price", "Engine Type","Car Brand","Transmission", "Door Number","Mileage"]))
+        elif option_choice == "6":
+            aggregatePrice(csvFileToDataframe('cars-csv/car-detail-data.csv',["Manufacturing Year", "Price", "Engine Type","Car Brand","Transmission", "Door Number","Mileage"]))
+        elif option_choice == "7":
+            displayGeolocation(csvFileToDataframe('cars-csv/car-summary-data.csv',["Price", "Dealer location", "Manufacturing year"]))
+        elif option_choice == "8":
             break
 
 
@@ -199,13 +275,17 @@ if __name__ == '__main__':
         print('\n'*2)
 
         if option_choice == "1":
-            urls = getCarSummaryUrls(50)
+            print("How many? ")
+            amount = input()
+            urls = getCarSummaryUrls(amount)
             rawHtml = getRawHtml(urls, 'stock-summary-item')
             writeRawHtml(rawHtml, 'raw-summary-html')
         elif option_choice == "2":
             populateSummaryCSV()
         elif option_choice == "3":
-            urls = getCarDetailsUrls(300)
+            print("How many? ")
+            amount = input()
+            urls = getCarDetailsUrls(amount)
             rawHtml = getRawHtml(urls,'fpa-main-detail')
             writeRawHtml(rawHtml, 'raw-details-html')
         elif option_choice == "4":
